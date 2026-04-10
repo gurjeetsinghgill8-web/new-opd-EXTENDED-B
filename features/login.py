@@ -1,78 +1,87 @@
-"""Login Feature — PIN-based authentication aur session management."""
+"""
+login.py — PIN-based authentication for Bharat AI OPD App.
+Supports built-in roles (chief, junior, admin) and licensed doctor PINs.
+Session state management after successful login.
+"""
+
 import logging
 from datetime import datetime
 
 import streamlit as st
 
-import config.settings as settings
-import database.sqlite_client as db
+from database.sqlite_client import verify_login_pin, get_all_licenses
+from config.settings import FEATURE_FLAGS
 
 log = logging.getLogger(__name__)
 
 
-def render_login() -> str | None:
-    """PIN verify karke role return karta hai; None agar fail. Logout bhi yahi handle."""
-    # ── Agar pehle se logged in hai toh dashboard view ─────────────────────────
-    if st.session_state.get("authenticated"):
-        role: str = st.session_state.get("role", "unknown")
-        st.markdown(f"### ✅ Logged in as **{role.title()}**  ")
-        login_time = st.session_state.get("login_time", "")
-        if login_time:
-            st.caption(f"Login time: {login_time}")
-        if st.button("🚪 Logout"):
-            # Saara session state clear kar dete hain — fresh start ke liye
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
-        return role
-
-    # ── Login form ─────────────────────────────────────────────────────────────
+def render_login():
+    """
+    Render the login screen. Sets session_state on success.
+    Handles: PIN input, verification, license expiry check, session init.
+    """
     st.title("🏥 Bharat AI OPD")
     st.markdown("---")
-    pin = st.text_input("Enter your 4-digit PIN", type="password", max_chars=4)
 
-    if st.button("🔐 Login"):
-        try:
-            if not pin:
-                st.warning("PIN enter karo."); return None
-            # PIN ko role se match karo — settings.PINS = {role: pin}
-            matched_role: str | None = None
-            for r, p in settings.PINS.items():
-                if pin.strip() == p:
-                    matched_role = r; break
-            if not matched_role:
-                st.error("❌ Galat PIN — dobara try karo."); return None
-            # ── License expiry check (admin ke liye nahi) ───────────────────────
-            if matched_role != "admin":
-                try:
-                    licenses = db.get_licenses()
-                    from datetime import datetime as _dt
-                    now = _dt.now()
-                    for lic in licenses:
-                        exp = lic.get("expiry_date", "")
-                        if exp:
-                            try:
-                                if _dt.strptime(exp, "%Y-%m-%d") < now:
-                                    st.warning(
-                                        f"⚠️ License expired for {lic.get('doctor_name','N/A')} "
-                                        f"on {exp}. Contact admin.")
-                            except ValueError:
-                                log.warning("Invalid expiry date format: %s", exp)
-                except Exception as e:
-                    log.error("License check failed: %s", e)
-            # ── Session state set karo ──────────────────────────────────────────
-            st.session_state["authenticated"] = True
-            st.session_state["role"] = matched_role
-            st.session_state["login_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            st.session_state["rx_count_today"] = 0
-            st.session_state["current_patient"] = None
-            st.session_state["selected_drugs"] = []
-            st.session_state["editing_rx"] = None
-            st.success(f"Welcome, {matched_role.title()}! 🎉")
-            log.info("Login success — role=%s", matched_role)
-            st.rerun()
-            return matched_role
-        except Exception as e:
-            log.error("Login error: %s", e)
-            st.error("Login mein error aaya. Check logs."); return None
-    return None
+    # ── Login Form ─────────────────────────────────────────────────────
+    pin = st.text_input("Enter your 4-digit PIN", type="password", max_chars=8, key="login_pin",
+                        placeholder="Your PIN")
+
+    if st.button("🔐 Login", type="primary", use_container_width=True, key="login_btn"):
+        if not pin:
+            st.warning("PIN enter karo.")
+            return
+
+        result = verify_login_pin(pin)
+
+        if not result:
+            st.error("❌ Galat PIN ya expired license. Dobara try karo ya admin se contact karo.")
+            return
+
+        role = result["role"]
+        did = result["doctor_id"]
+        dname = result["doctor_name"]
+        cname = result["clinic_name"]
+
+        # ── License expiry warning (for licensed doctors) ────────────
+        if role == "licensed":
+            try:
+                licenses = get_all_licenses()
+                from datetime import date
+                for lic in licenses:
+                    if lic.get("doctor_id") == did:
+                        exp_str = str(lic.get("expiry_date", ""))[:10]
+                        try:
+                            exp = date.fromisoformat(exp_str)
+                            days_left = (exp - date.today()).days
+                            if days_left <= 0:
+                                st.error(f"❌ License expired on {exp_str}. Contact admin.")
+                                return
+                            elif days_left <= 7:
+                                st.warning(f"⚠️ License expires in {days_left} days ({exp_str}).")
+                        except ValueError:
+                            pass
+            except Exception as e:
+                log.error("License check error: %s", e)
+
+        # ── Set Session State ─────────────────────────────────────────
+        st.session_state.logged_in = True
+        st.session_state.role = role
+        st.session_state.doctor_id = did
+        st.session_state.doctor_name = dname
+        st.session_state.clinic_name = cname
+        st.session_state.login_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.session_state.rx_count_today = 0
+        st.session_state.waiting_queue = []
+
+        # For licensed doctors, store license info
+        if role == "licensed":
+            st.session_state.lic = {
+                "doctor_name": dname,
+                "clinic_name": cname,
+                "specialty": result.get("specialty", ""),
+            }
+
+        log.info("Login success — role=%s, doctor_id=%s", role, did)
+        st.success(f"Welcome, {dname}! 🎉")
+        st.rerun()
