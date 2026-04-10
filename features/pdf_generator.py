@@ -1,6 +1,7 @@
 """
 pdf_generator — Professional Indian prescription PDF and CME PDF generation.
 Uses fpdf2 library. Generates letterhead with doctor/clinic info from settings.
+FIXED: Uses io.BytesIO for safe PDF byte output compatible with Streamlit download_button.
 """
 
 import io
@@ -17,10 +18,21 @@ log = logging.getLogger(__name__)
 
 
 def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label=""):
+    """
+    Generate professional prescription PDF with Indian letterhead format.
+    Args:
+        pt_name: Patient name
+        vitals: Vitals string (BP/HR/Sugar/Weight)
+        rx_text: Prescription text (AI generated or edited)
+        investigations: Additional investigations
+        specialty_label: If specialty consult, show specialty name
+    Returns: PDF bytes (pure Python bytes from BytesIO)
+    """
     sett = get_settings()
     pdf = FPDF()
     pdf.add_page()
 
+    # ── Letterhead Background ─────────────────────────────────────────
     pdf.set_fill_color(235, 245, 255)
     pdf.rect(0, 0, 210, 54, 'F')
     pdf.set_draw_color(0, 51, 102)
@@ -28,21 +40,25 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
     pdf.line(0, 54, 210, 54)
     pdf.set_line_width(0.2)
 
+    # LEFT: Doctor Name
     pdf.set_xy(8, 4)
     pdf.set_font("Helvetica", 'B', 13)
     pdf.set_text_color(0, 51, 102)
     pdf.cell(100, 7, safe_str(sett["doc_name"]), ln=False)
 
+    # RIGHT: Clinic Name
     pdf.set_xy(108, 4)
     pdf.set_font("Helvetica", 'B', 12)
     pdf.set_text_color(0, 51, 102)
     pdf.cell(97, 7, safe_str(sett["clinic_name"]), ln=False, align='R')
 
+    # Degrees
     pdf.set_xy(8, 12)
     pdf.set_font("Helvetica", 'B', 9)
     pdf.set_text_color(30, 30, 120)
     pdf.cell(100, 5, safe_str(sett.get("doc_degree", "")), ln=False)
 
+    # Address
     addr = sett.get("clinic_address", "")
     addr_lines = [l.strip() for l in addr.split("\n") if l.strip()] if addr else []
     pdf.set_xy(108, 12)
@@ -51,6 +67,7 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
     if addr_lines:
         pdf.cell(97, 5, safe_str(addr_lines[0]), ln=False, align='R')
 
+    # Specialty
     pdf.set_xy(8, 18)
     pdf.set_font("Helvetica", 'I', 9)
     pdf.set_text_color(60, 60, 120)
@@ -61,6 +78,7 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
         pdf.set_text_color(60, 60, 60)
         pdf.cell(97, 5, safe_str(addr_lines[1]), ln=False, align='R')
 
+    # Extra Qualifications
     extra = sett.get("doc_extra_quals", "")
     extra_lines = [l.strip() for l in extra.split("\n") if l.strip()] if extra else []
     pdf.set_font("Helvetica", '', 7)
@@ -69,6 +87,7 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
         pdf.set_xy(8, 24 + i * 4)
         pdf.cell(100, 4, safe_str(eq), ln=False)
 
+    # Phone, Email, Reg No (right column)
     y_r = 24
     if sett.get("doc_phone"):
         pdf.set_xy(108, y_r)
@@ -88,12 +107,14 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
         pdf.set_text_color(80, 80, 80)
         pdf.cell(97, 4, f"Reg: {safe_str(sett['doc_reg_no'])}", ln=False, align='R')
 
+    # Specialty Consult Label
     if specialty_label:
         pdf.set_xy(8, 47)
         pdf.set_font("Helvetica", 'B', 8)
         pdf.set_text_color(139, 0, 0)
         pdf.cell(194, 5, f"* Specialty Consultation: {safe_str(specialty_label)} *", align='C', ln=False)
 
+    # ── Patient Info Line ────────────────────────────────────────────
     pdf.set_xy(8, 57)
     pdf.set_font("Helvetica", 'B', 10)
     pdf.set_text_color(0, 0, 0)
@@ -107,11 +128,14 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
     pdf.line(8, y, 202, y)
     pdf.ln(3)
 
+    # ── Prescription Body ────────────────────────────────────────────
     pdf.set_font("Helvetica", '', 10)
+    # Clean up markdown formatting from AI output
     body = re.sub(r'\*\*PHONE.*', '', rx_text, flags=re.IGNORECASE)
     body = safe_str(body.replace('**', '').replace('* ', '- '))
     pdf.multi_cell(0, 5.5, body)
 
+    # ── Investigations Section ──────────────────────────────────────
     if investigations:
         pdf.ln(2)
         pdf.set_font("Helvetica", 'B', 10)
@@ -122,16 +146,25 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
         pdf.set_font("Helvetica", '', 10)
         pdf.multi_cell(0, 5.5, safe_str(investigations))
 
-    buffer = io.BytesIO()
-    pdf.output(buffer)
-    return buffer.getvalue()
+    # ── Output to BytesIO buffer (safe for Streamlit download_button) ──
+    buf = io.BytesIO()
+    pdf.output(buf)
+    return buf.getvalue()
 
 
-def make_cme_pdf(topic, content):
+def make_cme_pdf(topic: str, content: str) -> bytes:
+    """
+    Generate CME study material / research PDF.
+    Args:
+        topic: CME topic title
+        content: CME content text
+    Returns: PDF bytes
+    """
     sett = get_settings()
     pdf = FPDF()
     pdf.add_page()
 
+    # Header
     pdf.set_fill_color(240, 248, 255)
     pdf.rect(0, 0, 210, 30, 'F')
     pdf.set_font("Helvetica", 'B', 14)
@@ -146,12 +179,14 @@ def make_cme_pdf(topic, content):
     clean_content = safe_str(content.replace('**', '').replace('* ', '- '))
     pdf.multi_cell(0, 6, clean_content)
 
-    buffer = io.BytesIO()
-    pdf.output(buffer)
-    return buffer.getvalue()
+    # ── Output to BytesIO buffer (safe for Streamlit download_button) ──
+    buf = io.BytesIO()
+    pdf.output(buf)
+    return buf.getvalue()
 
 
 def show_pdf(pdf_bytes):
+    """Embed PDF in Streamlit using iframe with base64 encoding."""
     import streamlit as st
     b64 = base64.b64encode(pdf_bytes).decode()
     st.markdown(
