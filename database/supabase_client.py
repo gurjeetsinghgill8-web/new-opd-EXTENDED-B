@@ -1,19 +1,32 @@
 """
-Supabase REST Client — Bharat OPD cloud database wrapper.
+supabase_client — Bharat OPD cloud database wrapper.
 Supabase ka PostgREST API use karke CRUD operations karta hai.
+No external dependencies — uses requests library only.
 """
 
 import logging
-
 import requests
-
-from config import settings
+import config.settings as settings
 
 log = logging.getLogger(__name__)
 
 
-def _headers() -> dict[str, str]:
-    """Supabase ke liye required HTTP headers banata hai."""
+def _supa_available() -> bool:
+    """Check if Supabase is configured (URL + Key both non-empty)."""
+    url = settings.SUPABASE_URL
+    key = settings.SUPABASE_KEY
+    if not url or not key:
+        return False
+    return True
+
+
+def is_configured() -> bool:
+    """Public alias for _supa_available."""
+    return _supa_available()
+
+
+def _headers() -> dict:
+    """Supabase REST API headers with API key and auth token."""
     return {
         "apikey": settings.SUPABASE_KEY,
         "Authorization": f"Bearer {settings.SUPABASE_KEY}",
@@ -23,19 +36,14 @@ def _headers() -> dict[str, str]:
 
 
 def _base() -> str:
+    """Supabase REST API base URL."""
     return f"{settings.SUPABASE_URL.rstrip('/')}/rest/v1"
 
 
-def is_configured() -> bool:
-    """Supabase URL aur key dono non-empty hain to True return karta hai."""
-    return bool(settings.SUPABASE_URL and settings.SUPABASE_KEY)
-
-
-def insert_row(table: str, data: dict) -> dict | None:
-    """Naya row insert karta hai — POST request se."""
-    if not is_configured():
-        log.warning("Supabase not configured, skipping insert.")
-        return None
+def supa_insert(table: str, data: dict) -> dict:
+    """Insert a row via POST request. Returns the inserted row or error dict."""
+    if not _supa_available():
+        return {"error": "Supabase not configured"}
     try:
         url = f"{_base()}/{table}"
         resp = requests.post(url, json=data, headers=_headers(), timeout=15)
@@ -43,34 +51,33 @@ def insert_row(table: str, data: dict) -> dict | None:
         result = resp.json()
         return result[0] if isinstance(result, list) else result
     except requests.RequestException as e:
-        log.error("insert_row [%s]: %s", table, e)
-        return None
+        log.error("supa_insert [%s]: %s", table, e)
+        return {"error": str(e)}
 
 
-def fetch_rows(table: str, filters: dict | None = None) -> list[dict]:
-    """Rows fetch karta hai — optional filters ke saath GET request."""
-    if not is_configured():
-        log.warning("Supabase not configured, skipping fetch.")
+def supa_select(table: str, filters: dict = None, limit: int = 100) -> list:
+    """Fetch rows via GET request. Optional filters dict."""
+    if not _supa_available():
         return []
     try:
         url = f"{_base()}/{table}"
-        params: dict = {}
+        params = {}
         if filters:
-            # filters dict ko query params mein convert karta hai
             for k, v in filters.items():
                 params[k] = f"eq.{v}"
+        params["limit"] = str(limit)
+        params["order"] = "id.desc"
         resp = requests.get(url, headers=_headers(), params=params, timeout=15)
         resp.raise_for_status()
         return resp.json()
     except requests.RequestException as e:
-        log.error("fetch_rows [%s]: %s", table, e)
+        log.error("supa_select [%s]: %s", table, e)
         return []
 
 
-def update_row(table: str, row_id: str, data: dict) -> bool:
-    """Row update karta hai — PATCH request se, id filter ke saath."""
-    if not is_configured():
-        log.warning("Supabase not configured, skipping update.")
+def supa_update(table: str, row_id: str, data: dict) -> bool:
+    """Update a row via PATCH request."""
+    if not _supa_available():
         return False
     try:
         url = f"{_base()}/{table}"
@@ -79,31 +86,13 @@ def update_row(table: str, row_id: str, data: dict) -> bool:
         resp.raise_for_status()
         return True
     except requests.RequestException as e:
-        log.error("update_row [%s][%s]: %s", table, row_id, e)
-        return False
-
-
-def delete_row(table: str, row_id: str) -> bool:
-    """Row delete karta hai — DELETE request se, id filter ke saath."""
-    if not is_configured():
-        log.warning("Supabase not configured, skipping delete.")
-        return False
-    try:
-        url = f"{_base()}/{table}"
-        params = {"id": f"eq.{row_id}"}
-        resp = requests.delete(url, headers=_headers(), params=params, timeout=15)
-        resp.raise_for_status()
-        return True
-    except requests.RequestException as e:
-        log.error("delete_row [%s][%s]: %s", table, row_id, e)
+        log.error("supa_update [%s][%s]: %s", table, row_id, e)
         return False
 
 
 def init_tables() -> bool:
-    """Supabase RPC call se tables initialise karne ka attempt karta hai.
-    Agar RPC fail ho to bhi True return karta hai kyunki tables manually bhi ho sakte hain."""
-    if not is_configured():
-        log.info("Supabase not configured — skipping init_tables.")
+    """Try to init Supabase tables via RPC. Returns True if successful."""
+    if not _supa_available():
         return False
     try:
         url = f"{settings.SUPABASE_URL.rstrip('/')}/rest/v1/rpc/init_opd_tables"
@@ -114,3 +103,8 @@ def init_tables() -> bool:
     except requests.RequestException as e:
         log.warning("init_tables RPC failed (tables may already exist): %s", e)
         return False
+
+
+def push_patient_to_supabase(patient_data: dict) -> bool:
+    """Push a patient record to Supabase 'patients' table."""
+    return supa_insert("patients", patient_data).get("error") is None
