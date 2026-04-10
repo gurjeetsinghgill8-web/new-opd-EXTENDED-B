@@ -1,1 +1,1 @@
-# Admin module — portal, license management, system config.
+# admin package
