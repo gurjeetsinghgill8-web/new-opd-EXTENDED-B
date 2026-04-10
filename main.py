@@ -1,6 +1,20 @@
-"""Bharat AI OPD — thin entry point. Sirf routing, koi business logic nahi."""
-import logging
-import streamlit as st
+"""Bharat AI OPD - Self-healing entry point. Auto-creates __init__.py files."""
+import os, logging, streamlit as st
+
+# ── AUTO-FIX: Create __init__.py files if missing ──
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _pkg in ['config', 'database', 'ai_engine', 'features', 'admin', 'utils']:
+    _d = os.path.join(_HERE, _pkg)
+    os.makedirs(_d, exist_ok=True)
+    _f = os.path.join(_d, '__init__.py')
+    if not os.path.exists(_f):
+        try:
+            with open(_f, 'w') as _fh:
+                _fh.write('# auto-generated\n')
+        except Exception:
+            pass
+
+# ── Now import everything ──
 import config.settings as settings
 import database.sqlite_client as db
 import database.supabase_client as supa
