@@ -16,16 +16,6 @@ log = logging.getLogger(__name__)
 
 
 def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label=""):
-    """
-    Generate professional prescription PDF with Indian letterhead format.
-    Args:
-        pt_name: Patient name
-        vitals: Vitals string (BP/HR/Sugar/Weight)
-        rx_text: Prescription text (AI generated or edited)
-        investigations: Additional investigations
-        specialty_label: If specialty consult, show specialty name
-    Returns: PDF bytes
-    """
     sett = get_settings()
     pdf = FPDF()
     pdf.add_page()
@@ -85,7 +75,7 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
         pdf.set_xy(8, 24 + i * 4)
         pdf.cell(100, 4, safe_str(eq), ln=False)
 
-    # Phone, Email, Reg No (right column)
+    # Phone, Email, Reg No
     y_r = 24
     if sett.get("doc_phone"):
         pdf.set_xy(108, y_r)
@@ -128,7 +118,6 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
 
     # ── Prescription Body ────────────────────────────────────────────
     pdf.set_font("Helvetica", '', 10)
-    # Clean up markdown formatting from AI output
     body = re.sub(r'\*\*PHONE.*', '', rx_text, flags=re.IGNORECASE)
     body = safe_str(body.replace('**', '').replace('* ', '- '))
     pdf.multi_cell(0, 5.5, body)
@@ -144,22 +133,14 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
         pdf.set_font("Helvetica", '', 10)
         pdf.multi_cell(0, 5.5, safe_str(investigations))
 
-    return pdf.output(dest='S').encode('latin-1')
+    return pdf.output()
 
 
 def make_cme_pdf(topic: str, content: str) -> bytes:
-    """
-    Generate CME study material / research PDF.
-    Args:
-        topic: CME topic title
-        content: CME content text
-    Returns: PDF bytes
-    """
     sett = get_settings()
     pdf = FPDF()
     pdf.add_page()
 
-    # Header
     pdf.set_fill_color(240, 248, 255)
     pdf.rect(0, 0, 210, 30, 'F')
     pdf.set_font("Helvetica", 'B', 14)
@@ -174,11 +155,10 @@ def make_cme_pdf(topic: str, content: str) -> bytes:
     clean_content = safe_str(content.replace('**', '').replace('* ', '- '))
     pdf.multi_cell(0, 6, clean_content)
 
-    return pdf.output(dest='S').encode('latin-1')
+    return pdf.output()
 
 
 def show_pdf(pdf_bytes):
-    """Embed PDF in Streamlit using iframe with base64 encoding."""
     import streamlit as st
     b64 = base64.b64encode(pdf_bytes).decode()
     st.markdown(
