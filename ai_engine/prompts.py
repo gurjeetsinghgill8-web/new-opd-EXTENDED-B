@@ -1,82 +1,236 @@
-"""prompts — Bharat AI OPD: system prompts aur Rx output validator."""
-import logging, re
-from typing import Any, Dict, List
+"""
+prompts — Bharat AI OPD: ALL system prompts for AI features.
+GP Rx, Specialty Upgrade, CME, Research, Drug Review, Batch Scan validation.
+Every function returns a properly formatted system/user prompt string.
+"""
+
+import re
+import logging
+from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 _REQUIRED_RX_SECTIONS: List[str] = ["Diagnosis", "Drugs", "Advice", "Follow-up"]
 
 
-def get_rx_prompt(patient_data: Dict[str, Any]) -> str:
-    """GP prescription system prompt — Indian clinical context ke saath."""
-    cd = patient_data.get("current_drugs", "None")
-    return (
-        "You are an experienced Indian General Practitioner AI assistant.\n"
-        "Generate a structured clinical prescription in plain text (no markdown) for:\n\n"
-        f"Patient: {patient_data.get('name','Unknown')}, {patient_data.get('age','N/A')} yrs, "
-        f"{patient_data.get('gender','N/A')}\n"
-        f"Chief Complaints: {patient_data.get('complaints','Not provided')}\n"
-        f"Vitals: {patient_data.get('vitals','Not provided')}\n"
-        f"Current Medications: {cd}\n\n"
-        "IMPORTANT (Indian context):\n"
-        "1. Use INN/generic drug names with Indian standard dosages (mg/mL).\n"
-        "2. Mention brand alternatives in brackets where relevant.\n"
-        "3. Specify form (tab/cap/syp/inj), frequency, duration, food timing.\n"
-        "4. Suggest investigations if needed (blood tests, X-ray, etc.).\n"
-        "5. Clear follow-up timeline (3 days, 1 week, etc.).\n"
-        "6. Add lifestyle/diet advice in simple language.\n"
-        "7. Flag red-flag symptoms requiring urgent referral.\n\n"
-        "OUTPUT FORMAT (exact headings):\nDiagnosis:\nDrugs:\nAdvice:\nFollow-up:"
-    )
+# ════════════════════════════════════════════════════════════════════════════
+# GP PRESCRIPTION PROMPT
+# ════════════════════════════════════════════════════════════════════════════
+
+def gp_prompt(patient_name: str, vitals: str, notes: str, doc_name: str,
+              past_context: str = "", progress_context: str = "") -> str:
+    """
+    System prompt for GP prescription generation.
+    Includes Indian clinical context, drug naming conventions, and optional follow-up context.
+    """
+    return f"""You are an experienced Indian General Practitioner AI assistant working with Dr. {doc_name}.
+
+Generate a structured clinical prescription in plain text (no markdown, no asterisks) for:
+
+Patient: {patient_name}
+Vitals: {vitals or 'Not provided'}
+Clinical Notes: {notes or 'Not provided'}
+{past_context}
+{progress_context}
+
+IMPORTANT RULES (Indian OPD context):
+1. Use INN/generic drug names first, brand names in brackets where relevant.
+2. Indian standard dosages: Tab. Amlodipine 5mg (not 2.5mg), Tab. Metformin 500mg BD (not XR unless specified).
+3. Specify form (Tab./Cap./Syp./Inj.), frequency (OD/BD/TDS/QID), duration, and food timing.
+4. Mention brand alternatives common in India: e.g., Telma (Telmisartan), Glycomet (Metformin), Atorva (Atorvastatin).
+5. Suggest relevant Indian OPD investigations (blood tests, X-ray, ECG, USG).
+6. Clear follow-up timeline (3 days, 1 week, 2 weeks).
+7. Add lifestyle/diet advice in simple Hindi-English mix if appropriate.
+8. Flag red-flag symptoms requiring urgent referral.
+
+OUTPUT FORMAT (exact headings, no markdown):
+Diagnosis:
+Drugs:
+Advice:
+Follow-up:"""
 
 
-def get_specialty_upgrade_prompt(complaints: str, current_specialty: str) -> str:
-    """Specialist referral prompt — JSON output: specialty, urgency, reasoning."""
-    return (
-        "You are a senior Indian doctor advising on specialist referral.\n\n"
-        f"Patient Complaints: {complaints}\nCurrent Department: {current_specialty}\n\n"
-        "Analyze if this patient needs referral. Respond ONLY with valid JSON:\n"
-        '{"recommended_specialty": "<name or No referral needed>", '
-        '"urgency": "<routine|urgent|emergency>", '
-        '"reasoning": "<brief clinical reasoning>", '
-        '"investigations_needed": ["<list>"], '
-        '"interim_management": "<what to do while waiting>"}'
-    )
+# ════════════════════════════════════════════════════════════════════════════
+# SPECIALTY UPGRADE PROMPT
+# ════════════════════════════════════════════════════════════════════════════
+
+def specialty_prompt(patient_name: str, vitals: str, current_rx: str,
+                     specialty_name: str, specialty_data: dict, custom_name: str = "") -> str:
+    """
+    System prompt for specialty consultation upgrade.
+    Compares GP Rx with specialist recommendations.
+    """
+    persona = specialty_data.get("persona", f"Senior {specialty_name} Specialist")
+    guidelines = specialty_data.get("guidelines", "Latest clinical guidelines")
+    focus = specialty_data.get("focus", specialty_name)
+    display_name = custom_name or specialty_name
+
+    return f"""You are {persona}.
+
+You are reviewing a patient who was initially seen by a GP. Your task is to provide a SPECIALIST OPINION.
+
+Patient: {patient_name}
+Vitals: {vitals or 'Not provided'}
+
+CURRENT GP PRESCRIPTION:
+{current_rx}
+
+CLINICAL GUIDELINES: {guidelines}
+SPECIALTY FOCUS: {focus}
+
+Provide your specialist prescription and recommendations in plain text (no markdown):
+
+{display_name} SPECIALIST PRESCRIPTION:
+Diagnosis:
+Drugs: (specialist-recommended medications with Indian brand alternatives)
+Advice: (specialist-specific lifestyle/diet modifications)
+Follow-up:
+Investigations needed:
+
+COMPARISON WITH GP Rx:
+- What would you ADD to the GP prescription?
+- What would you CHANGE from the GP prescription?
+- What would you REMOVE from the GP prescription?
+
+**EVIDENCE BASE:** (cite key studies/guidelines supporting your recommendations)
+"""
 
 
-def get_cme_prompt(topic: str) -> str:
-    """CME guideline summary prompt — Indian guidelines (NHB, ICMR, API) included."""
-    return (
-        "You are a medical educator creating a CME summary.\n\n"
-        f"Topic: {topic}\n\n"
-        "Create a concise CME summary:\n"
-        "1. Definitions and epidemiology (India-specific data preferred).\n"
-        "2. Diagnostic criteria (Indian guidelines: NHB, ICMR, API, NICE adapted).\n"
-        "3. Stepwise management for Indian OPD settings.\n"
-        "4. Red flags and specialist referral triggers.\n"
-        "5. Recent advances (last 2 years) for Indian practice.\n"
-        "6. 3-5 take-home points.\n"
-        "Plain text only. No markdown."
-    )
+def specialty_chat_prompt(specialty_name: str, patient_name: str, vitals: str,
+                          specialist_rx: str, chat_history: str, question: str) -> str:
+    """
+    Prompt for follow-up chat with a specialist about the prescription.
+    """
+    return f"""You are a Senior {specialty_name} Specialist continuing a consultation.
+
+Patient: {patient_name}
+Vitals: {vitals or 'Not provided'}
+
+Your previous prescription:
+{specialist_rx}
+
+PREVIOUS CHAT:
+{chat_history}
+
+Doctor's follow-up question: {question}
+
+Provide a concise, clinical answer in plain text (no markdown). Reference guidelines where appropriate."""
 
 
-def get_research_prompt(question: str) -> str:
-    """Research query prompt — literature review with evidence levels."""
-    return (
-        "You are a medical research assistant providing evidence-based answers.\n\n"
-        f"Research Question: {question}\n\n"
-        "Provide a structured literature review:\n"
-        "1. Summary of current evidence (cite landmark studies).\n"
-        "2. Evidence level per recommendation (Level I-V).\n"
-        "3. Key trials with results (NNT, RR, OR where available).\n"
-        "4. Indian context — India-specific studies or guidelines.\n"
-        "5. Knowledge gaps and ongoing research.\n"
-        "6. Clinical bottom line for Indian physicians.\n"
-        "Plain text only. No markdown."
-    )
+# ════════════════════════════════════════════════════════════════════════════
+# DRUG REVIEW PROMPT
+# ════════════════════════════════════════════════════════════════════════════
+
+def drug_review_prompt(vitals: str, prescription: str) -> str:
+    """
+    Prompt for deep drug review and optimization.
+    Checks interactions, dosages, appropriateness for vitals.
+    """
+    return f"""You are a senior clinical pharmacist performing a thorough drug review for an Indian OPD patient.
+
+Patient Vitals: {vitals or 'Not provided'}
+
+PRESCRIPTION TO REVIEW:
+{prescription}
+
+Perform a comprehensive drug review:
+
+1. DRUG-DRUG INTERACTIONS: List any clinically significant interactions.
+2. DOSE APPROPRIATENESS: Check if doses are appropriate for Indian adults (adjust for age/renal/hepatic if needed).
+3. VITALS-BASED CHECKS: Are drugs appropriate given the patient's vitals (BP, sugar, weight)?
+4. MISSING THERAPIES: What standard-of-care drugs are missing?
+5. DE-ESCALATION: Can any drugs be stopped or simplified?
+6. COST OPTIMIZATION: Suggest cheaper Indian generic alternatives.
+7. RED FLAGS: Any dangerous prescriptions?
+
+Provide analysis in plain text (no markdown). Be specific with drug names and doses."""
 
 
-def validate_rx_output(text: str) -> Dict[str, Any]:
-    """AI Rx output validate karo — check required sections. Return valid/sections/missing."""
+# ════════════════════════════════════════════════════════════════════════════
+# CME (Continuing Medical Education) PROMPTS
+# ════════════════════════════════════════════════════════════════════════════
+
+def cme_prompt(topic: str) -> str:
+    """Prompt for CME guideline summary generation."""
+    return f"""You are a medical educator creating CME study material for Indian doctors.
+
+Topic: {topic}
+
+Create a comprehensive CME summary:
+
+1. DEFINITIONS AND EPIDEMIOLOGY: India-specific data where available.
+2. DIAGNOSTIC CRITERIA: Indian guidelines (NHB for hypertension, RSSDI for diabetes, ICMR, API, IAP, IADVL).
+3. STEPWISE MANAGEMENT: Practical Indian OPD protocol with drug names, doses, durations.
+4. INVESTIGATIONS: Essential and optional tests with Indian cost considerations.
+5. RED FLAGS: When to refer urgently to specialist.
+6. RECENT ADVANCES (2024-2025): Latest updates relevant to Indian practice.
+7. TAKE-HOME POINTS: 5 key points for busy OPD doctors.
+
+Plain text only. No markdown. Use Indian drug names and brand alternatives."""
+
+
+def custom_cme_prompt(topic: str) -> str:
+    """Prompt for custom CME topic (free text input)."""
+    return cme_prompt(topic)
+
+
+def cme_chat_prompt(topic: str, chat_history: str, question: str) -> str:
+    """Prompt for follow-up questions about a CME topic."""
+    return f"""You are a medical educator continuing a CME discussion.
+
+Topic: {topic}
+
+STUDY MATERIAL:
+{chat_history}
+
+Doctor's question: {question}
+
+Provide a detailed, evidence-based answer in plain text (no markdown). Include references to Indian guidelines where relevant."""
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# RESEARCH AGENT PROMPT
+# ════════════════════════════════════════════════════════════════════════════
+
+def research_prompt(doc_name: str, patient_count: int, total_revenue: int,
+                    patient_data: str, starred_data: str, question: str) -> str:
+    """
+    Prompt for clinical research and practice analytics.
+    Analyzes patient data patterns and answers research questions.
+    """
+    return f"""You are a clinical research assistant for Dr. {doc_name}'s OPD practice.
+
+PRACTICE DATA:
+- Total Patients: {patient_count}
+- Total Revenue: Rs. {total_revenue:,}
+- Doctor: {doc_name}
+
+PATIENT SAMPLE (last 150 records):
+{patient_data}
+
+STARRED SPECIALTY CASES:
+{starred_data}
+
+RESEARCH QUESTION: {question}
+
+Provide a thorough, data-driven analysis in plain text (no markdown):
+1. Direct answer to the research question based on the data.
+2. Statistical patterns observed.
+3. Indian context comparison (national averages where relevant).
+4. Actionable recommendations for practice improvement.
+5. Limitations of this analysis."""
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# RX OUTPUT VALIDATION
+# ════════════════════════════════════════════════════════════════════════════
+
+def validate_rx(text: str) -> Tuple[bool, List[str]]:
+    """
+    Validate AI Rx output — checks if required sections are present.
+    Returns (is_valid, list_of_missing_sections).
+    """
+    if not text:
+        return False, list(_REQUIRED_RX_SECTIONS)
     try:
         found, missing = [], []
         for section in _REQUIRED_RX_SECTIONS:
@@ -84,7 +238,7 @@ def validate_rx_output(text: str) -> Dict[str, Any]:
                 found.append(section)
             else:
                 missing.append(section)
-        return {"valid": len(missing) == 0, "sections": found, "missing": missing}
+        return len(missing) == 0, missing
     except Exception as e:
-        logger.error("Rx validation error: %s", e)
-        return {"valid": False, "sections": [], "missing": list(_REQUIRED_RX_SECTIONS)}
+        logger.error("validate_rx error: %s", e)
+        return False, list(_REQUIRED_RX_SECTIONS)
