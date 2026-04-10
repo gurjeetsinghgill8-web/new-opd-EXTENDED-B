@@ -114,5 +114,5 @@ DB_PATH: str = "opd_data.db"
 
 # ── Groq AI Model ────────────────────────────────────────────────────────────
 GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-VISION_MODEL: str = os.getenv("VISION_MODEL", "llama-3.3-70b-versatile")
+VISION_MODEL: str = os.getenv("VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "whisper-large-v3")
