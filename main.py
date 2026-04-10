@@ -1,59 +1,49 @@
-"""Bharat AI OPD - Diagnostic Tool. Shows exactly what files are missing."""
-import os, sys
-
-_HERE = os.path.dirname(os.path.abspath(__file__))
-
-# ── Check all required files ──
-FILES = [
-    'config/settings.py',
-    'config/__init__.py',
-    'database/sqlite_client.py',
-    'database/supabase_client.py',
-    'database/sync_manager.py',
-    'database/__init__.py',
-    'ai_engine/groq_client.py',
-    'ai_engine/prompts.py',
-    'ai_engine/__init__.py',
-    'features/login.py',
-    'features/rx_form.py',
-    'features/patient_search.py',
-    'features/roster.py',
-    'features/specialty_upgrade.py',
-    'features/pdf_gen.py',
-    'features/__init__.py',
-    'admin/portal.py',
-    'admin/__init__.py',
-    'utils/helpers.py',
-    'utils/__init__.py',
-    'requirements.txt',
-    'Procfile',
-    '.streamlit/config.toml',
-    '.gitignore',
-]
-
+"""Bharat AI OPD — thin entry point. Sirf routing, koi business logic nahi."""
+import logging
 import streamlit as st
-st.set_page_config(page_title="OPD File Check", page_icon="🔍")
+import config.settings as settings
+import database.sqlite_client as db
+import database.supabase_client as supa
+import database.sync_manager as sync
+from features.login import render_login
+from features.rx_form import render_rx_form
+from features.patient_search import render_patient_search
+from features.roster import render_roster
+from features.specialty_upgrade import render_specialty_upgrade
+from admin.portal import render_admin_portal
 
-st.title("🔍 File Checker")
-st.markdown("Checking all files...")
-
-missing = []
-found = []
-for f in FILES:
-    path = os.path.join(_HERE, f)
-    if os.path.exists(path):
-        found.append(f)
-        st.markdown(f"✅ `{f}`")
-    else:
-        missing.append(f)
-        st.markdown(f"❌ `{f}` — **MISSING!**")
-
-st.markdown("---")
-if missing:
-    st.error(f"### {len(missing)} FILES MISSING!")
-    st.markdown("**Ye files upload karo GitHub pe:**")
-    for f in missing:
-        st.code(f)
-else:
-    st.success("### All files found!")
-    st.markdown("Ab original main.py wapas lagao.")
+log = logging.getLogger(__name__)
+st.set_page_config(page_title="Bharat AI OPD", page_icon="🏥", layout="wide")
+db.init_db()
+if "authenticated" not in st.session_state:
+    render_login(); st.stop()
+role: str = st.session_state.get("role", "junior")
+with st.sidebar:
+    st.title("🏥 " + settings.CLINIC_NAME)
+    rc = "🔴" if role == "admin" else "🟢" if role == "chief" else "🔵"
+    st.markdown(f"{rc} **{role.title()}**")
+    tabs = ["📝 New Rx", "🔍 Search Patient", "📊 Roster", "⚕️ Specialty Upgrade", "🏥 Waiting Room"]
+    if role == "admin": tabs.append("⚙️ Admin")
+    choice = st.selectbox("Navigate", tabs, key="nav_tab")
+    st.markdown("---")
+    st.markdown("🟢 Local DB Active")
+    st.markdown("🟢 Supabase" if supa.is_configured() else "🔴 Supabase Off")
+    if st.button("🚪 Logout"):
+        for k in list(st.session_state.keys()): del st.session_state[k]
+        st.rerun()
+if not st.session_state.get("restored") and supa.is_configured():
+    try: sync.sync_supabase_to_local(); st.session_state["restored"] = True
+    except Exception as e: log.error("Auto-restore: %s", e)
+try:
+    if choice == "📝 New Rx": render_rx_form(role)
+    elif choice == "🔍 Search Patient": render_patient_search()
+    elif choice == "📊 Roster": render_roster(role)
+    elif choice == "⚕️ Specialty Upgrade": render_specialty_upgrade()
+    elif choice == "🏥 Waiting Room":
+        st.session_state.setdefault("waiting_room", [])
+        if st.session_state["waiting_room"]:
+            wr = sorted(st.session_state["waiting_room"], key=lambda x: x["time"])
+            st.dataframe([{"#": i+1, "Patient": p["name"], "Status": p["status"]} for i, p in enumerate(wr)], use_container_width=True)
+        else: st.info("No patients waiting.")
+    elif choice == "⚙️ Admin": render_admin_portal()
+except Exception as e: log.error("Route: %s", e); st.error(f"Error: {e}")
