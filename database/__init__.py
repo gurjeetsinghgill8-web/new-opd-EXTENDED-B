@@ -1,1 +1,1 @@
-# database package — SQLite + Supabase + Sync modules
+# database package
