@@ -1,1 +1,1 @@
-# config package
+# config package — Bharat AI OPD App
