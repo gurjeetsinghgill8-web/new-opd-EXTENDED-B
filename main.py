@@ -1,20 +1,19 @@
-"""Bharat AI OPD - Self-healing entry point. Auto-creates __init__.py files."""
-import os, logging, streamlit as st
+"""Bharat AI OPD - Smart entry point. Works WITHOUT __init__.py files!"""
+import sys, os, types, logging
 
-# ── AUTO-FIX: Create __init__.py files if missing ──
+# ── VIRTUAL PACKAGES: No __init__.py needed! ──
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _pkg in ['config', 'database', 'ai_engine', 'features', 'admin', 'utils']:
-    _d = os.path.join(_HERE, _pkg)
-    os.makedirs(_d, exist_ok=True)
-    _f = os.path.join(_d, '__init__.py')
-    if not os.path.exists(_f):
-        try:
-            with open(_f, 'w') as _fh:
-                _fh.write('# auto-generated\n')
-        except Exception:
-            pass
+    _pkg_path = os.path.join(_HERE, _pkg)
+    if _pkg not in sys.modules:
+        _mod = types.ModuleType(_pkg)
+        _mod.__path__ = [_pkg_path]
+        _mod.__package__ = _pkg
+        _mod.__file__ = os.path.join(_pkg_path, '__init__.py')
+        sys.modules[_pkg] = _mod
 
 # ── Now import everything ──
+import streamlit as st
 import config.settings as settings
 import database.sqlite_client as db
 import database.supabase_client as supa
