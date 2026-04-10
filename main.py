@@ -17,8 +17,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelna
 # ── Initialize modules ──────────────────────────────────────────────────
 from config.settings import GOOGLE_SHEET_WEBHOOK
 from database.sqlite_client import (
-    init_db, get_settings, get_patients_filter, search_patients,
+    init_db, get_settings, save_settings, get_patients_filter, search_patients,
     get_starred, count_pending, save_patient,
+    get_templates, save_template, delete_template,
 )
 from database.supabase_client import _supa_available
 from database.sync_manager import sync_from_supabase, fetch_sheet_data
@@ -49,11 +50,11 @@ for k, v in [
 # ══════════════════════════════════════════════════════════════════════════
 if not st.session_state.logged_in:
     render_login()
-    st.stop()  # Stop execution — don't render dashboard below
+    st.stop()
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ADMIN PORTAL (separate routing)
+# ADMIN PORTAL
 # ══════════════════════════════════════════════════════════════════════════
 if st.session_state.role == "admin":
     from admin.portal import render_admin_portal
@@ -62,7 +63,7 @@ if st.session_state.role == "admin":
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# DOCTOR PORTAL (Chief / Licensed / Junior)
+# DOCTOR PORTAL
 # ══════════════════════════════════════════════════════════════════════════
 role = st.session_state.role
 did = st.session_state.doctor_id
@@ -71,7 +72,6 @@ is_lic = role == "licensed"
 is_junior = role == "junior"
 sett = get_settings()
 
-# ── Header ──────────────────────────────────────────────────────────────
 hc1, hc2 = st.columns([5, 1])
 with hc1:
     if is_chief:
@@ -87,24 +87,19 @@ with hc2:
             del st.session_state[k]
         st.rerun()
 
-# ── DB Status Badge ─────────────────────────────────────────────────────
 if _supa_available():
     st.success("☁️ **Cloud DB: Connected** — Data saves permanently", icon="✅")
 else:
     st.warning("⚠️ **Cloud DB: NOT connected** — Data saves locally + Google Sheet backup only.")
 
-# ── Sync from Supabase on login ─────────────────────────────────────────
 sync_from_supabase()
 
-# ── Pending Rx Badge ────────────────────────────────────────────────────
 pending_n = count_pending(did)
 if pending_n > 0:
     st.warning(f"📋 **{pending_n} prescription(s)** pending review in Batch Scan tab →")
 
-# ── Auto-restore check ─────────────────────────────────────────────────
+
 def _check_and_restore():
-    """Check if local DB is empty after server restart, offer restore from cloud."""
-    c = st.session_state.get("_conn")
     try:
         from database.sqlite_client import _conn
         conn = _conn()
@@ -126,9 +121,7 @@ def _check_and_restore():
 
 _check_and_restore()
 
-# ══════════════════════════════════════════════════════════════════════════
-# TAB LAYOUT
-# ══════════════════════════════════════════════════════════════════════════
+# ── TABS ────────────────────────────────────────────────────────────────
 if is_chief:
     tb_new, tb_batch, tb_star, tb_roster, tb_settings, tb_research = st.tabs([
         "📝 New Rx", "📸 Batch Scan", "⭐ Starred",
@@ -142,7 +135,7 @@ else:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# TAB: NEW Rx (Patient Form + AI Prescription)
+# TAB: NEW Rx
 # ══════════════════════════════════════════════════════════════════════════
 with tb_new:
     pt_mode_key = "pt_mode_selection"
@@ -155,7 +148,6 @@ with tb_new:
                      type="primary" if st.session_state[pt_mode_key] == "new" else "secondary",
                      key="btn_new_pt"):
             st.session_state[pt_mode_key] = "new"
-            # Clear form state
             for k in list(st.session_state.keys()):
                 if any(k.startswith(p) for p in ["pre_", "rx_main", "notes_", "upgrades_",
                                                    "sel_specs_", "show_upg_", "inv_", "cam_",
@@ -178,7 +170,6 @@ with tb_new:
                 f"(Past: {st.session_state.get('past_date', '')})"
             )
 
-    # ── Old Patient Search ──────────────────────────────────────────
     if st.session_state[pt_mode_key] == "old":
         st.markdown("---")
         st.markdown("### 👤 Search Old Patient")
@@ -190,10 +181,9 @@ with tb_new:
             if op_results:
                 st.success(f"🔍 {len(op_results)} record(s) mila")
                 for idx, pt in enumerate(op_results):
-                    src_tag = "📱 DB"
                     with st.expander(
                         f"👤 {pt['patient_name']} | {str(pt['date'])[:10]} | "
-                        f"📞 {pt['phone']} | {src_tag}"
+                        f"📞 {pt['phone']} | 📱 DB"
                     ):
                         st.write(f"**Vitals:** {pt['vitals']} | **Fee:** ₹{pt['fee']}")
                         if pt.get('complaints'):
@@ -236,27 +226,19 @@ with tb_new:
                 st.warning(f"'{op_q}' ka koi record nahi mila.")
         st.markdown("---")
 
-    # ── Show New Rx Form ────────────────────────────────────────────
     if st.session_state[pt_mode_key] == "new":
         render_rx_form(uid="main")
 
 
-# ══════════════════════════════════════════════════════════════════════════
-# TAB: BATCH SCAN
-# ══════════════════════════════════════════════════════════════════════════
 with tb_batch:
     render_batch_scan()
 
-
-# ══════════════════════════════════════════════════════════════════════════
-# TAB: STARRED
-# ══════════════════════════════════════════════════════════════════════════
 with tb_star:
     render_starred()
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# TAB: OPD ROSTER (Patient Search + Daily Log + Visit History + Charts)
+# TAB: OPD ROSTER
 # ══════════════════════════════════════════════════════════════════════════
 with tb_roster:
     st.markdown("### 🔍 Patient Search")
@@ -310,10 +292,9 @@ with tb_roster:
                 p["_source"] = "db"
             combined = list(db_pts)
 
-            # Also fetch from Google Sheet if webhook configured
             webhook = get_settings().get("google_sheet_webhook", "")
             if webhook.startswith("http"):
-                with st.spinner("☁️ Google Sheet se purana data fetch kar rahe hain..."):
+                with st.spinner("☁️ Google Sheet se data fetch..."):
                     all_sheet, _ = fetch_sheet_data()
                     if all_sheet:
                         sheet_pts = []
@@ -352,14 +333,12 @@ with tb_roster:
                 sh_n = len(combined) - db_n
                 st.success(f"✅ **{len(combined)} records** (📱 {db_n} DB + ☁️ {sh_n} Google Sheet)")
 
-    # ── Display Roster Data ─────────────────────────────────────────
     if st.session_state.get("roster_data"):
         pts = st.session_state.roster_data
         m1, m2 = st.columns(2)
         m1.metric("👥 Total Patients", len(pts))
         m2.metric("💰 Total Revenue", f"₹{sum(clean_fee(p['fee']) for p in pts):,}")
 
-        # CSV Export
         csv_data = generate_csv(pts)
         st.download_button(
             "📥 Export CSV", data=csv_data,
@@ -378,7 +357,6 @@ with tb_roster:
                     st.caption(f"C/O: {pt['complaints'][:100]}")
                 st.info(pt['medicines'])
 
-                # ── Visit History Timeline with Charts ──────────────
                 all_visits = search_patients(pt['patient_name'], did)
                 if len(all_visits) > 1:
                     with st.expander(
@@ -417,7 +395,6 @@ with tb_roster:
                                 tc3.markdown("**Weight Trend**")
                                 tc3.line_chart(pd.DataFrame({"Weight (kg)": wt_vals}, index=wt_lbls))
 
-                        # Visit history list
                         for vidx, v in enumerate(all_visits):
                             v_date = str(v.get("date", ""))[:10]
                             st.markdown(
@@ -428,7 +405,6 @@ with tb_roster:
                                 st.text(v.get("medicines", "No data"))
                             st.divider()
 
-                # ── Action Buttons ──────────────────────────────────
                 rb1, rb2 = st.columns(2)
                 with rb1:
                     if st.button("📝 Follow-Up", key=f"rfu_{idx}"):
@@ -452,7 +428,7 @@ with tb_roster:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# TAB: SETTINGS (Clinic Info, Doctor Profile, Templates)
+# TAB: SETTINGS
 # ══════════════════════════════════════════════════════════════════════════
 with tb_settings:
     st.markdown("### ⚙️ Clinic & Doctor Settings")
