@@ -138,7 +138,6 @@ def call_groq(messages: list, model: str = None, temp: float = 0.3, max_tokens: 
 def call_groq_vision(image, context: str = "") -> str:
     """
     Call Groq vision model with a single image to read handwritten prescription.
-    Tries multiple vision models as fallback.
     Returns extracted text from the image.
     """
     if not hasattr(image, 'save'):
@@ -147,7 +146,6 @@ def call_groq_vision(image, context: str = "") -> str:
             from PIL import Image
             image = Image.open(image)
         except Exception:
-            logger.error("call_groq_vision: could not open image file")
             return ""
 
     messages = [
@@ -159,31 +157,7 @@ Return in this EXACT JSON format (no markdown, no code fences, pure JSON):
 {f"Context: {context}" if context else ""}""",
         image
     ]
-
-    # Try models in order — first one that works wins
-    vision_models = [
-        settings.VISION_MODEL,
-        "llama-3.2-11b-vision-preview",
-        "llama-3.2-90b-vision-preview",
-    ]
-    # Remove duplicates
-    seen = set()
-    unique_models = []
-    for m in vision_models:
-        if m not in seen:
-            seen.add(m)
-            unique_models.append(m)
-
-    for model in unique_models:
-        result = call_groq(messages, model=model, temp=0.1, max_tokens=2000)
-        if result:
-            logger.info("Vision model %s returned result (length=%d)", model, len(result))
-            return result
-        else:
-            logger.warning("Vision model %s returned empty, trying next...", model)
-
-    logger.error("All vision models failed for batch scan")
-    return ""
+    return call_groq(messages, model=settings.VISION_MODEL, temp=0.1, max_tokens=2000)
 
 
 def parse_ai_json(text: str) -> dict:
