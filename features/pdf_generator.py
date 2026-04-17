@@ -1,10 +1,8 @@
 """
 pdf_generator — Professional Indian prescription PDF and CME PDF generation.
 Uses fpdf2 library. Generates letterhead with doctor/clinic info from settings.
-FIXED: Uses io.BytesIO for safe PDF byte output compatible with Streamlit download_button.
 """
 
-import io
 import re
 import base64
 import datetime
@@ -26,7 +24,7 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
         rx_text: Prescription text (AI generated or edited)
         investigations: Additional investigations
         specialty_label: If specialty consult, show specialty name
-    Returns: PDF bytes (pure Python bytes from BytesIO)
+    Returns: PDF bytes
     """
     sett = get_settings()
     pdf = FPDF()
@@ -146,10 +144,7 @@ def make_rx_pdf(pt_name, vitals, rx_text, investigations="", specialty_label="")
         pdf.set_font("Helvetica", '', 10)
         pdf.multi_cell(0, 5.5, safe_str(investigations))
 
-    # ── Output to BytesIO buffer (safe for Streamlit download_button) ──
-    buf = io.BytesIO()
-    pdf.output(buf)
-    return buf.getvalue()
+    return pdf.output(dest='S').encode('latin-1')
 
 
 def make_cme_pdf(topic: str, content: str) -> bytes:
@@ -179,10 +174,7 @@ def make_cme_pdf(topic: str, content: str) -> bytes:
     clean_content = safe_str(content.replace('**', '').replace('* ', '- '))
     pdf.multi_cell(0, 6, clean_content)
 
-    # ── Output to BytesIO buffer (safe for Streamlit download_button) ──
-    buf = io.BytesIO()
-    pdf.output(buf)
-    return buf.getvalue()
+    return pdf.output(dest='S').encode('latin-1')
 
 
 def show_pdf(pdf_bytes):
