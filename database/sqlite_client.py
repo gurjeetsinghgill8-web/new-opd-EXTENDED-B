@@ -2,15 +2,12 @@
 sqlite_client — Bharat OPD local database (SQLite).
 ALL database operations: patients, prescriptions, templates, licenses,
 settings, pending batch scan records, drug suggestions, starred upgrades.
-
-FIXED: Connection is never closed — cached globally for Streamlit lifetime.
-_conn() auto-reconnects if connection is lost.
 """
 
 import json
 import logging
 import sqlite3
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from typing import Optional
 
 from config.settings import PINS, DB_PATH
@@ -98,24 +95,17 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 """
 
-# ── Connection helper — NEVER close, auto-reconnect ───────────────────────
+# ── Connection helper ───────────────────────────────────────────────────────
 _conn_cache = None
 
 
 def _conn() -> sqlite3.Connection:
-    """Get or create a cached SQLite connection. Auto-reconnects if dead."""
+    """Get or create a cached SQLite connection."""
     global _conn_cache
-    try:
-        if _conn_cache is not None:
-            # Quick health check — if connection is closed or broken, recreate
-            _conn_cache.execute("SELECT 1")
-            return _conn_cache
-    except Exception:
-        _conn_cache = None
-
-    _conn_cache = sqlite3.connect(DB_PATH, check_same_thread=False)
-    _conn_cache.row_factory = sqlite3.Row
-    _conn_cache.execute("PRAGMA journal_mode=WAL")
+    if _conn_cache is None:
+        _conn_cache = sqlite3.connect(DB_PATH, check_same_thread=False)
+        _conn_cache.row_factory = sqlite3.Row
+        _conn_cache.execute("PRAGMA journal_mode=WAL")
     return _conn_cache
 
 
@@ -137,6 +127,7 @@ def get_settings() -> dict:
     try:
         c = _conn()
         rows = c.execute("SELECT key, value FROM app_settings").fetchall()
+        c.close()
         d = {r["key"]: r["value"] for r in rows}
     except Exception:
         d = {}
@@ -227,6 +218,7 @@ def search_patients(query, doctor_id="chief"):
             "ORDER BY date DESC LIMIT 50",
             (doctor_id, f"%{query}%", f"%{query}%")
         ).fetchall()
+        c.close()
         return [dict(r) for r in rows]
     except Exception as e:
         log.error("search_patients error: %s", e)
@@ -244,13 +236,13 @@ def get_patients_filter(date_filter: str, doctor_id="chief"):
                 (doctor_id, today.isoformat())
             ).fetchall()
         elif date_filter == "Yesterday":
-            yday = (today - timedelta(days=1)).isoformat()
+            yday = (today - __import__('datetime').timedelta(days=1)).isoformat()
             rows = c.execute(
                 "SELECT * FROM patients WHERE doctor_id=? AND date(date)=? ORDER BY date DESC",
                 (doctor_id, yday)
             ).fetchall()
         elif date_filter == "Last 5 Days":
-            five = (today - timedelta(days=5)).isoformat()
+            five = (today - __import__('datetime').timedelta(days=5)).isoformat()
             rows = c.execute(
                 "SELECT * FROM patients WHERE doctor_id=? AND date(date)>=? ORDER BY date DESC",
                 (doctor_id, five)
@@ -260,6 +252,7 @@ def get_patients_filter(date_filter: str, doctor_id="chief"):
                 "SELECT * FROM patients WHERE doctor_id=? ORDER BY date DESC LIMIT 500",
                 (doctor_id,)
             ).fetchall()
+        c.close()
         return [dict(r) for r in rows]
     except Exception as e:
         log.error("get_patients_filter error: %s", e)
@@ -274,6 +267,7 @@ def get_all_patients_admin(doctor_id):
             "SELECT * FROM patients WHERE doctor_id=? ORDER BY date DESC",
             (doctor_id,)
         ).fetchall()
+        c.close()
         return [dict(r) for r in rows]
     except Exception as e:
         log.error("get_all_patients_admin error: %s", e)
@@ -290,6 +284,7 @@ def get_drug_suggestions(query, doctor_id="chief"):
             "ORDER BY date DESC LIMIT 8",
             (doctor_id, f"%{query}%")
         ).fetchall()
+        c.close()
         return [r["drug_name"] for r in rows]
     except Exception as e:
         log.error("get_drug_suggestions error: %s", e)
@@ -305,6 +300,7 @@ def get_templates(category="Rx"):
             "SELECT name, content FROM templates WHERE category=? ORDER BY name",
             (category,)
         ).fetchall()
+        c.close()
         return {r["name"]: r["content"] for r in rows}
     except Exception as e:
         log.error("get_templates error: %s", e)
@@ -320,6 +316,7 @@ def save_template(category, name, content):
             (category, name, content)
         )
         c.commit()
+        c.close()
         return True
     except Exception as e:
         log.error("save_template error: %s", e)
@@ -332,6 +329,7 @@ def delete_template(name):
         c = _conn()
         c.execute("DELETE FROM templates WHERE name=?", (name,))
         c.commit()
+        c.close()
         return True
     except Exception as e:
         log.error("delete_template error: %s", e)
@@ -350,6 +348,7 @@ def save_upgrade(patient_name, vitals, original_rx, specialty, upgraded_rx, evid
         )
         c.commit()
         rid = cur.lastrowid
+        c.close()
         return rid
     except Exception as e:
         log.error("save_upgrade error: %s", e)
@@ -365,6 +364,7 @@ def star_upgrade(upgrade_id, star_note=""):
             (star_note, upgrade_id)
         )
         c.commit()
+        c.close()
         return True
     except Exception as e:
         log.error("star_upgrade error: %s", e)
@@ -378,6 +378,7 @@ def get_starred():
         rows = c.execute(
             "SELECT * FROM specialty_upgrades WHERE starred=1 ORDER BY date DESC"
         ).fetchall()
+        c.close()
         return [dict(r) for r in rows]
     except Exception as e:
         log.error("get_starred error: %s", e)
@@ -397,6 +398,7 @@ def save_pending(doctor_id, image_b64, ai_extracted, patient_name, phone, vitals
              fee, complaints, medicines, investigations)
         )
         c.commit()
+        c.close()
         return True
     except Exception as e:
         log.error("save_pending error: %s", e)
@@ -411,6 +413,7 @@ def get_pending(doctor_id="chief"):
             "SELECT * FROM pending_rx WHERE doctor_id=? AND status='pending' ORDER BY uploaded_at DESC",
             (doctor_id,)
         ).fetchall()
+        c.close()
         return [dict(r) for r in rows]
     except Exception as e:
         log.error("get_pending error: %s", e)
@@ -427,6 +430,7 @@ def update_pending(rx_id, patient_name, phone, vitals, fee, complaints, medicine
             (patient_name, phone, vitals, fee, complaints, medicines, investigations, status, rx_id)
         )
         c.commit()
+        c.close()
         return True
     except Exception as e:
         log.error("update_pending error: %s", e)
@@ -452,6 +456,7 @@ def count_pending(doctor_id="chief"):
             "SELECT COUNT(*) as cnt FROM pending_rx WHERE doctor_id=? AND status='pending'",
             (doctor_id,)
         ).fetchone()
+        c.close()
         return row["cnt"] if row else 0
     except Exception as e:
         log.error("count_pending error: %s", e)
@@ -471,6 +476,7 @@ def create_license(doctor_id, doctor_name, doctor_email, doctor_phone, pin,
              clinic_name or "", specialty or "", str(expiry_date), notes or "")
         )
         c.commit()
+        c.close()
         log.info("License created: %s (%s)", doctor_name, doctor_id)
         return True
     except Exception as e:
@@ -483,6 +489,7 @@ def get_all_licenses():
     try:
         c = _conn()
         rows = c.execute("SELECT * FROM licenses ORDER BY created_date DESC").fetchall()
+        c.close()
         return [dict(r) for r in rows]
     except Exception as e:
         log.error("get_all_licenses error: %s", e)
@@ -495,6 +502,7 @@ def delete_license(license_id):
         c = _conn()
         c.execute("DELETE FROM licenses WHERE id=?", (license_id,))
         c.commit()
+        c.close()
         return True
     except Exception as e:
         log.error("delete_license error: %s", e)
@@ -520,6 +528,7 @@ def verify_login_pin(pin, role_override=None):
     try:
         c = _conn()
         row = c.execute("SELECT * FROM licenses WHERE pin=?", (pin,)).fetchone()
+        c.close()
         if row:
             d = dict(row)
             # Check expiry
@@ -575,6 +584,7 @@ def count_patients(doctor_id=""):
             row = c.execute("SELECT COUNT(*) as cnt FROM patients WHERE doctor_id=?", (doctor_id,)).fetchone()
         else:
             row = c.execute("SELECT COUNT(*) as cnt FROM patients").fetchone()
+        c.close()
         return row["cnt"] if row else 0
     except Exception:
         return 0
